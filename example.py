@@ -16,12 +16,10 @@ from dspace_rest_client.models import Community, Collection, Item, Bundle, Bitst
 # DSPACE_API_ENDPOINT=
 # DSPACE_API_USERNAME=
 # DSPACE_API_PASSWORD=
-url = 'http://localhost:8080/server/api'
-username = 'username@test.system.edu'
-password = 'password'
+
 
 # Instantiate DSpace client
-d = DSpaceClient(api_endpoint=url, username=username, password=password)
+d = DSpaceClient()
 
 # Authenticate against the DSpace client
 authenticated = d.authenticate()
