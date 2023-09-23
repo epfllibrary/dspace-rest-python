@@ -15,13 +15,13 @@ better abstracting and handling of HAL-like API responses, plus just all the oth
 @author Kim Shepherd <kim@shepherd.nz>
 """
 import code
+import configparser
 import json
 import logging
 import sys
 
 import requests
 from requests import Request
-import pysolr
 import os
 from uuid import UUID
 from .models import *
@@ -55,22 +55,7 @@ class DSpaceClient:
     """
     # Set up basic environment, variables
     session = None
-    API_ENDPOINT = 'http://localhost:8080/server/api'
-    SOLR_ENDPOINT = 'http://localhost:8983/solr'
-    SOLR_AUTH = None
-    if 'DSPACE_API_ENDPOINT' in os.environ:
-        API_ENDPOINT = os.environ['DSPACE_API_ENDPOINT']
-    LOGIN_URL = f'{API_ENDPOINT}/authn/login'
-    USERNAME = 'username@test.system.edu'
-    if 'DSPACE_API_USERNAME' in os.environ:
-        USERNAME = os.environ['DSPACE_API_USERNAME']
-    PASSWORD = 'password'
-    if 'DSPACE_API_PASSWORD' in os.environ:
-        PASSWORD = os.environ['DSPACE_API_PASSWORD']
-    if 'SOLR_ENDPOINT' in os.environ:
-        SOLR_ENDPOINT = os.environ['SOLR_ENDPOINT']
-    if 'SOLR_AUTH' in os.environ:
-        SOLR_AUTH = os.environ['SOLR_AUTH']
+    config: configparser.ConfigParser
     verbose = False
 
     # Simple enum for patch operation types
@@ -80,21 +65,16 @@ class DSpaceClient:
         REPLACE = 'replace'
         MOVE = 'move'
 
-    def __init__(self, api_endpoint=API_ENDPOINT, username=USERNAME, password=PASSWORD, solr_endpoint=SOLR_ENDPOINT,
-                 solr_auth=SOLR_AUTH):
+    def __init__(self):
         """
-        Accept optional API endpoint, username, password arguments using the OS environment variables as defaults
         :param api_endpoint:    base path to DSpace REST API, eg. http://localhost:8080/server/api
-        :param username:        username with appropriate privileges to perform operations on REST API
-        :param password:        password for the above username
         """
         self.session = requests.Session()
-        self.API_ENDPOINT = api_endpoint
+        self.config = configparser.ConfigParser()
+        self.config.read('config.ini')
+        self.API_ENDPOINT = self.config.get("dspace", "endpoint")
+        self.API_TOKEN = self.config.get("dspace", "token")
         self.LOGIN_URL = f'{self.API_ENDPOINT}/authn/login'
-        self.USERNAME = username
-        self.PASSWORD = password
-        self.SOLR_ENDPOINT = solr_endpoint
-        self.solr = pysolr.Solr(url=solr_endpoint, always_commit=True, timeout=300, auth=solr_auth)
 
     def authenticate(self):
         """
@@ -106,16 +86,15 @@ class DSpaceClient:
         r = self.session.post(self.LOGIN_URL)
         self.update_token(r)
 
-        # POST Login
-        r = self.session.post(self.LOGIN_URL, data={'user': self.USERNAME, 'password': self.PASSWORD})
-        if 'Authorization' in r.headers:
-            self.session.headers.update({'Authorization': r.headers.get('Authorization')})
+        auth_token = self.API_TOKEN
+        if auth_token:
+            self.session.headers.update({"Authorization": f"Bearer {auth_token}"})
 
         # Get and check authentication status
         r = self.session.get(f'{self.API_ENDPOINT}/authn/status')
         r_json = r.json()
         if 'authenticated' in r_json and r_json['authenticated'] is True:
-            logging.info(f'Authenticated successfully as {self.USERNAME}')
+            logging.info(f'Authenticated successfully')
         else:
             return False
 
@@ -318,7 +297,7 @@ class DSpaceClient:
         return r
 
     # PAGINATION
-    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dsoType=None):
+    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, configuration=None):
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
@@ -337,8 +316,8 @@ class DSpaceClient:
         params = {}
         if query is not None:
             params['query'] = query
-        if dsoType is not None:
-            params['dsoType'] = dsoType
+        if configuration is not None:
+            params['configuration'] = configuration
         if size is not None:
             params['size'] = size
         if page is not None:
@@ -351,6 +330,7 @@ class DSpaceClient:
         # instead lots of 'does this key exist, etc etc' checks, just go for it and wrap in a try?
         try:
             results = r_json['_embedded']['searchResult']['_embedded']['objects']
+            #   print(results)
             for result in results:
                 resource = result['_embedded']['indexableObject']
                 dso = DSpaceObject(resource)
@@ -923,13 +903,3 @@ class DSpaceClient:
             logging.debug(f'Updating XSRF token to {t}')
             self.session.headers.update({'X-XSRF-Token': t})
             self.session.cookies.update({'X-XSRF-Token': t})
-
-    #WRAPPER
-    def solr_query(self, query, filters=None, fields=None, start=0, rows=999999999):
-        if fields is None:
-            fields = []
-        if filters is None:
-            filters = []
-        return self.solr.search(query, fq=filters, start=start, rows=rows, **{
-            'fl': ','.join(fields)
-        })
