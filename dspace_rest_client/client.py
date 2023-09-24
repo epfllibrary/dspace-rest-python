@@ -67,7 +67,10 @@ class DSpaceClient:
 
     def __init__(self):
         """
-        :param api_endpoint:    base path to DSpace REST API, eg. http://localhost:8080/server/api
+        :params
+        api_endpoint: base path to DSpace REST API, eg. http://localhost:8080/server/api
+        api_token: token for DSpace REST API
+
         """
         self.session = requests.Session()
         self.config = configparser.ConfigParser()
@@ -297,7 +300,7 @@ class DSpaceClient:
         return r
 
     # PAGINATION
-    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, configuration=None):
+    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, configuration=None, scope=None, max_pages=None):
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
@@ -316,27 +319,60 @@ class DSpaceClient:
         params = {}
         if query is not None:
             params['query'] = query
+        # Configuration Options :
+        #   administrativeView : administrative search
+        #   orgunit : search for units
+        #   researchoutputs : search for publications
+        #   person : search for people
+        #   RELATION.OrgUnit.people : search for members of a specific unit
+        #   RELATION.OrgUnit.organizations : search units linked to a specific unit
+        #   RELATION.OrgUnit.rppublications : search for publications linked to authors affiliated to a specific orgunit
+        #   RELATION.OrgUnit.publications : search for publications linked to a specific orgunit
+        #   RELATION.Person.researchoutputs : search research outputs linked to a person
         if configuration is not None:
             params['configuration'] = configuration
+        # UUID of the scoped object
+        if scope is not None:
+            params['scope'] = scope
         if size is not None:
             params['size'] = size
         if page is not None:
             params['page'] = page
+        else:
+            page = 0
         if sort is not None:
             params['sort'] = sort
 
-        r_json = self.fetch_resource(url=url, params={**params, **filters})
+        total_pages = 0  # To keep track of the total number of pages retrieved
 
-        # instead lots of 'does this key exist, etc etc' checks, just go for it and wrap in a try?
-        try:
-            results = r_json['_embedded']['searchResult']['_embedded']['objects']
-            #   print(results)
-            for result in results:
-                resource = result['_embedded']['indexableObject']
-                dso = DSpaceObject(resource)
-                dsos.append(dso)
-        except (TypeError, ValueError) as err:
-            print(f'error parsing search result json {err}')
+        while True:
+            params['page'] = page  # Set the current page
+            r_json = self.fetch_resource(url=url, params={**params, **filters})
+            # totalElements = r_json['_embedded']['searchResult']['page']['totalElements']
+            # logging.info(f'Total objects retrieved: {totalElements}')
+            # logging.info(f'Results for page: {page}')
+            # instead lots of 'does this key exist, etc etc' checks, just go for it and wrap in a try?
+            try:
+                results = r_json['_embedded']['searchResult']['_embedded']['objects']
+                for result in results:
+                    resource = result['_embedded']['indexableObject']
+                    dso = DSpaceObject(resource)
+                    dsos.append(dso)
+
+                total_pages += 1
+
+                # Check if there are more pages
+                if '_links' in r_json['_embedded']['searchResult'] and 'next' in r_json['_embedded']['searchResult']['_links']:
+                    page += 1  # Move to the next page
+                else:
+                    break  # No more pages to retrieve or reached max_pages
+                        
+            except (TypeError, ValueError) as err:
+                print(f'error parsing search result json {err}')
+            
+            # Check if the maximum number of pages has been reached
+            if max_pages is not None and total_pages >= max_pages:
+                break
 
         return dsos
 
