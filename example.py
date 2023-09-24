@@ -10,14 +10,6 @@ some resources in a DSpace 7 repository.
 from dspace_rest_client.client import DSpaceClient
 from dspace_rest_client.models import Community, Collection, Item, Bundle, Bitstream
 
-# Example variables needed for authentication and basic API requests
-# SET THESE TO MATCH YOUR TEST SYSTEM BEFORE RUNNING THE EXAMPLE SCRIPT
-# You can also leave them out of the constructor and set environment variables instead:
-# DSPACE_API_ENDPOINT=
-# DSPACE_API_USERNAME=
-# DSPACE_API_PASSWORD=
-
-
 # Instantiate DSpace client
 d = DSpaceClient()
 

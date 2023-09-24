@@ -18,11 +18,11 @@ if not authenticated:
     print(f'Error logging in! Giving up.')
     exit(1)
 
-query = "laboratory"
-configuration = "orgunit"
+scope = ""
+configuration = ""
 
-dsos = d.search_objects(query=query, configuration=configuration)
+dsos = d.search_objects(scope=scope, configuration=configuration, size=5, max_pages=2)
 for dso in dsos:
-    pprint.pprint(dso.metadata)
+    print(dso.metadata.get('dc.title'))
 
 
