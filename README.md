@@ -7,45 +7,30 @@ Community, Collection, Bundle, Item, Bitstream, Group and User (EPerson) objects
 
 Help with extending the scope and improving the code is always welcome!
 
-PyPI homepage: https://pypi.org/project/dspace-rest-client/
-
 ## Requirements
 * Python 3.x (developed using Python 3.8.5)
 * Python Requests module (see `requirements.txt`)
 * Working DSpace 7 repository with an accessible REST API
 
 ## Installation
-To install with pip: 
-`pip install dspace_rest_client`
-
-(or `pip3` or `python -m pip` as appropriate to your environment)
-
-To install manually, clone this repository and install the requirements:
+To install, clone this repository and install the requirements:
 ```commandline
 git clone https://github.com/the-library-code/dspace-rest-python.git
 pip install -r requirements.txt
 ```
 
-
 ## Usage
 After installing dependencies, you're ready to run the script.
-You can either pass the base API URL to the DSpaceClient() constructor or set them as environment variables.
+Set your API token and base URL in the config.ini file, following the `config.ini.example` template.
 
-Some environment variables can be used when setting up the REST client connection.
-`DSPACE_API_ENDPOINT` is the base URL of your endpoint eg. http://localhost:8080/server
-`DSPACE_API_USERNAME` and `DSPACE_API_PASSWORD` are credentials to use for authentication.
-
-See the `example.py` script for an example of community, collection, item, bundle and bitstream creation.
-Just set the credentials and base URL at the top of the script to match your test system, or if you've set environment
-variables, remove the arguments from the DSpaceClient() instantiation and the environment variables will be used as
-defaults.
+Refer to the `example.py` script for an illustration of community, collection, item, bundle, and bitstream creation. 
+For an example of querying items in the repository, consult the `search_example.py` script.
 
 The output from the `example.py` script should look something like:
 
 ```commandline
 ╰─$ python example.py                                                                                                                                                                                                              1 ↵
-Updating token to 9730dfb9-c4ea-4f56-a2f0-4dc4cacf5059
-Authenticated successfully as kim@shepherd.nz
+Authenticated successfully
 API Post: Updating token to b44f91c2-5386-4c11-a1ca-1ea06613fae4
 {"timestamp":"2022-02-10T05:44:12.758+00:00","status":403,"error":"Forbidden","message":"Access is denied. Invalid CSRF token.","path":"/server/api/core/communities"}
 API Post: Retrying request with updated CSRF token
