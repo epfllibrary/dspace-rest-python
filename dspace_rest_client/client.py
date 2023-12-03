@@ -28,7 +28,8 @@ from .models import *
 
 __all__ = ['DSpaceClient']
 
-logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.DEBUG)
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+
 
 def parse_json(response):
     """
@@ -105,7 +106,7 @@ class DSpaceClient:
         # Get and check authentication status
         r = self.session.get(f"{self.API_ENDPOINT}/authn/status", headers=self.request_headers)
         if r.status_code == 200:
-            r_json = r.json()
+            r_json = parse_json(r)
             if 'authenticated' in r_json and r_json['authenticated'] is True:
                 logging.info(f'Authenticated successfully')
                 return r_json['authenticated']
@@ -120,15 +121,18 @@ class DSpaceClient:
         r = self.api_post(self.LOGIN_URL, None, None)
         self.update_token(r)
 
-    def api_get(self, url, params=None, data=None):
+    def api_get(self, url, params=None, data=None, headers=None):
         """
         Perform a GET request. Refresh XSRF token if necessary.
         @param url:     DSpace REST API URL
         @param params:  any parameters to include (eg ?page=0)
         @param data:    any data to supply (typically not relevant for GET)
+        @param headers: any override headers (eg. with short-lived token for download)
         @return:        Response from API
         """
-        r = self.session.get(url, params=params, data=data, headers=self.request_headers)
+        if headers is None:
+            headers = self.request_headers
+        r = self.session.get(url, params=params, data=data, headers=headers)
         self.update_token(r)
         return r
 
@@ -314,11 +318,12 @@ class DSpaceClient:
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
+        @param scope:   uuid to limit search scope, eg. owning collection, parent community, etc.
         @param filters: discovery filters as dict eg. {'f.entityType': 'Publication,equals', ... }
         @param page: page number (not like 'start' as this is not row number, but page number of size {size})
         @param size: size of page (aka. 'rows'), affects the page parameter above
         @param sort: sort eg. 'title,asc'
-        @param dsoType: DSO type to further filter results
+        @param dso_type: DSO type to further filter results
         @return:        list of DspaceObject objects constructed from API resources
         """
         dsos = []
@@ -658,6 +663,13 @@ class DSpaceClient:
             logging.error(f'Error creating bitstream: {r.status_code}: {r.text}')
             return None
 
+    def download_bitstream(self, uuid=None):
+        url = f'{self.API_ENDPOINT}/core/bitstreams/{uuid}/content'
+        h = {'User-Agent': self.USER_AGENT, 'Authorization': self.get_short_lived_token()}
+        r = self.api_get(url, headers=h)
+        if r.status_code == 200:
+            return r.content
+
     # PAGINATION
     def get_communities(self, uuid=None, page=0, size=20, sort=None, top=False):
         """
@@ -971,3 +983,30 @@ class DSpaceClient:
             # Update headers and cookies
             self.session.headers.update({'X-XSRF-Token': t})
             self.session.cookies.update({'X-XSRF-Token': t})
+
+    def get_short_lived_token(self):
+        """
+        Get a short-lived (2 min) token in order to request restricted bitstream downloads
+        @return: short lived Authorization token
+        """
+        if not self.session:
+            logging.debug('Session state not found, setting...')
+            self.session = requests.Session()
+
+        url = f'{self.API_ENDPOINT}/authn/shortlivedtokens'
+        r = self.api_post(url, json=None, params=None)
+        r_json = parse_json(r)
+        if r_json is not None and 'token' in r_json:
+            return r_json['token']
+
+        logging.error('Could not retrieve short-lived token')
+        return None
+
+    def solr_query(self, query, filters=None, fields=None, start=0, rows=999999999):
+        if fields is None:
+            fields = []
+        if filters is None:
+            filters = []
+        return self.solr.search(query, fq=filters, start=start, rows=rows, **{
+            'fl': ','.join(fields)
+        })
