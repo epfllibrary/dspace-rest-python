@@ -28,7 +28,7 @@ from .models import *
 
 __all__ = ['DSpaceClient']
 
-logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.DEBUG)
 
 def parse_json(response):
     """
@@ -54,6 +54,9 @@ class DSpaceClient:
     Higher level get, create, update, partial_update (patch) functions are implemented for each DSO type
     """
     # Set up basic environment, variables
+    USER_AGENT = "DSpace Python REST Client"
+    if 'USER_AGENT' in os.environ:
+        USER_AGENT = os.environ['USER_AGENT']
     session = None
     config: configparser.ConfigParser
     verbose = False
@@ -65,7 +68,7 @@ class DSpaceClient:
         REPLACE = 'replace'
         MOVE = 'move'
 
-    def __init__(self):
+    def __init__(self, fake_user_agent=False):
         """
         :params
         api_endpoint: base path to DSpace REST API, eg. http://localhost:8080/server/api
@@ -78,15 +81,22 @@ class DSpaceClient:
         self.API_ENDPOINT = self.config.get("dspace", "endpoint")
         self.API_TOKEN = self.config.get("dspace", "token")
         self.LOGIN_URL = f'{self.API_ENDPOINT}/authn/login'
+        if fake_user_agent:
+            self.USER_AGENT = 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
+                              'Chrome/39.0.2171.95 Safari/537.36'
+        # Set headers based on this
+        self.auth_request_headers = {'User-Agent': self.USER_AGENT}
+        self.request_headers = {'Content-type': 'application/json', 'User-Agent': self.USER_AGENT}
+        self.list_request_headers = {'Content-type': 'text-uri-list', 'User-Agent': self.USER_AGENT}
 
-    def authenticate(self):
+    def authenticate(self, retry=False):
         """
         Authenticate with the DSpace REST API. As with other operations, perform XSRF refreshes when necessary.
         After POST, check /authn/status and log success if the authenticated json property is true
         @return: response object
         """
         # Get and update CSRF token
-        r = self.session.post(self.LOGIN_URL)
+        r = self.session.post(self.LOGIN_URL, headers=self.auth_request_headers)
         self.update_token(r)
 
         auth_token = self.API_TOKEN
@@ -94,14 +104,14 @@ class DSpaceClient:
             self.session.headers.update({"Authorization": f"Bearer {auth_token}"})
 
         # Get and check authentication status
-        r = self.session.get(f'{self.API_ENDPOINT}/authn/status')
-        r_json = r.json()
-        if 'authenticated' in r_json and r_json['authenticated'] is True:
-            logging.info(f'Authenticated successfully')
-        else:
-            return False
-
-        return r_json['authenticated']
+        r = self.session.get(f"{self.API_ENDPOINT}/authn/status", headers=self.request_headers)
+        if r.status_code == 200:
+            r_json = r.json()
+            if 'authenticated' in r_json and r_json['authenticated'] is True:
+                logging.info(f'Authenticated successfully')
+                return r_json['authenticated']
+        # Default, return false
+        return False
 
     def refresh_token(self):
         """
@@ -119,7 +129,7 @@ class DSpaceClient:
         @param data:    any data to supply (typically not relevant for GET)
         @return:        Response from API
         """
-        r = self.session.get(url, params=params, data=data)
+        r = self.session.get(url, params=params, data=data, headers=self.request_headers)
         self.update_token(r)
         return r
 
@@ -133,8 +143,7 @@ class DSpaceClient:
         @param retry:   Has this method already been retried? Used if we need to refresh XSRF.
         @return:        Response from API
         """
-        h = {'Content-type': 'application/json'}
-        r = self.session.post(url, json=json, params=params, headers=h)
+        r = self.session.post(url, json=json, params=params, headers=self.request_headers)
         self.update_token(r)
 
         if r.status_code == 403:
@@ -162,8 +171,7 @@ class DSpaceClient:
         @param retry:   Has this method already been retried? Used if we need to refresh XSRF.
         @return:        Response from API
         """
-        h = {'Content-type': 'text/uri-list'}
-        r = self.session.post(url, data=uri_list, params=params, headers=h)
+        r = self.session.post(url, data=uri_list, params=params, headers=self.list_request_headers)
         self.update_token(r)
 
         if r.status_code == 403:
@@ -191,8 +199,7 @@ class DSpaceClient:
         @param retry:   Has this method already been retried? Used if we need to refresh XSRF.
         @return:        Response from API
         """
-        h = {'Content-type': 'application/json'}
-        r = self.session.put(url, params=params, json=json, headers=h)
+        r = self.session.put(url, params=params, json=json, headers=self.request_headers)
         self.update_token(r)
 
         if r.status_code == 403:
@@ -220,8 +227,7 @@ class DSpaceClient:
         @param retry:   Has this method already been retried? Used if we need to refresh XSRF.
         @return:        Response from API
         """
-        h = {'Content-type': 'application/json'}
-        r = self.session.delete(url, params=params, headers=h)
+        r = self.session.delete(url, params=params, headers=self.request_headers)
         self.update_token(r)
 
         if r.status_code == 403:
@@ -274,9 +280,8 @@ class DSpaceClient:
                 data["value"] = value
 
         # set headers
-        h = {'Content-type': 'application/json'}
         # perform patch request
-        r = self.session.patch(url, json=[data], headers=h)
+        r = self.session.patch(url, json=[data], headers=self.request_headers)
         self.update_token(r)
 
         if r.status_code == 403:
@@ -342,9 +347,7 @@ class DSpaceClient:
             page = 0
         if sort is not None:
             params['sort'] = sort
-
         total_pages = 0  # To keep track of the total number of pages retrieved
-
         while True:
             params['page'] = page  # Set the current page
             r_json = self.fetch_resource(url=url, params={**params, **filters})
@@ -358,18 +361,14 @@ class DSpaceClient:
                     resource = result['_embedded']['indexableObject']
                     dso = DSpaceObject(resource)
                     dsos.append(dso)
-
                 total_pages += 1
-
                 # Check if there are more pages
                 if '_links' in r_json['_embedded']['searchResult'] and 'next' in r_json['_embedded']['searchResult']['_links']:
                     page += 1  # Move to the next page
                 else:
                     break  # No more pages to retrieve or reached max_pages
-                        
             except (TypeError, ValueError) as err:
                 print(f'error parsing search result json {err}')
-            
             # Check if the maximum number of pages has been reached
             if max_pages is not None and total_pages >= max_pages:
                 break
@@ -629,7 +628,7 @@ class DSpaceClient:
         properties = {'name': name, 'metadata': metadata, 'bundleName': bundle.name}
         payload = {'properties': json.dumps(properties) + ';application/json'}
         h = self.session.headers
-        h.update({'Content-Encoding': 'gzip'})
+        h.update({'Content-Encoding': 'gzip', 'User-Agent': self.USER_AGENT})
         req = Request('POST', url, data=payload, headers=h, files=files)
         prepared_req = self.session.prepare_request(req)
         r = self.session.send(prepared_req)
