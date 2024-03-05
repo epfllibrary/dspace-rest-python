@@ -814,7 +814,8 @@ class DSpaceClient:
         try:
             id = UUID(uuid).version
             url = f'{url}/{uuid}'
-            return self.api_get(url, None, None)
+            r_json  = self.fetch_resource(url)
+            return Item(r_json)
         except ValueError:
             logging.error(f'Invalid item UUID: {uuid}')
             return None
