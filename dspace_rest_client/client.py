@@ -18,7 +18,6 @@ import code
 import configparser
 import json
 import logging
-import sys
 
 import requests
 from requests import Request
@@ -95,6 +94,7 @@ class DSpaceClient:
         After POST, check /authn/status and log success if the authenticated json property is true
         @return: response object
         """
+        # Set headers for requests made during authentication
         # Get and update CSRF token
         r = self.session.post(self.LOGIN_URL, headers=self.auth_request_headers)
         self.update_token(r)
@@ -314,7 +314,7 @@ class DSpaceClient:
         return r
 
     # PAGINATION
-    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, configuration=None, scope=None, max_pages=None):
+    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dso_type=None, configuration=None, scope=None, max_pages=None):
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
@@ -349,6 +349,8 @@ class DSpaceClient:
         # UUID of the scoped object
         if scope is not None:
             params['scope'] = scope
+        if dso_type is not None:
+            params['dsoType'] = dso_type
         if size is not None:
             params['size'] = size
         if page is not None:
@@ -430,7 +432,7 @@ class DSpaceClient:
         r = self.api_post(url, params, data)
         if r.status_code == 201:
             # 201 Created - success!
-            new_dso = r.json()
+            new_dso = parse_json(r)
             logging.info(f'{new_dso["type"]} {new_dso["uuid"]} created successfully!')
         else:
             logging.error(f'create operation failed: {r.status_code}: {r.text} ({url})')
@@ -515,9 +517,8 @@ class DSpaceClient:
             else:
                 logging.error(f'update operation failed: {r.status_code}: {r.text} ({url})')
                 return None
-
         except ValueError as e:
-            logging.error(f'{e}')
+            logging.error(f'Error deleting DSO {dso.uuid}: {e}')
             return None
 
     # PAGINATION
@@ -708,7 +709,7 @@ class DSpaceClient:
             # Set new URL
             url = f'{url}/search/top'
 
-        print(f'Performing get on {url}')
+        logging.debug(f'Performing get on {url}')
         # Perform actual get
         r_json = self.fetch_resource(url, params)
         # Empty list
