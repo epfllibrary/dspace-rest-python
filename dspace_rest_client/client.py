@@ -86,7 +86,7 @@ class DSpaceClient:
         # Set headers based on this
         self.auth_request_headers = {'User-Agent': self.USER_AGENT}
         self.request_headers = {'Content-type': 'application/json', 'User-Agent': self.USER_AGENT}
-        self.list_request_headers = {'Content-type': 'text-uri-list', 'User-Agent': self.USER_AGENT}
+        self.list_request_headers = {'Content-type': 'text/uri-list', 'User-Agent': self.USER_AGENT}
 
     def authenticate(self, retry=False):
         """
@@ -836,7 +836,7 @@ class DSpaceClient:
         items = list()
         if '_embedded' in r_json:
             # This is a list of items
-            if 'collections' in r_json['_embedded']:
+            if 'items' in r_json['_embedded']:
                 for item_resource in r_json['_embedded']['items']:
                     items.append(Item(item_resource))
         elif 'uuid' in r_json:
@@ -900,7 +900,7 @@ class DSpaceClient:
             'value': value,
             'language': language,
             'authority': authority,
-            'confidence': confidence
+            'confidence': confidence,
         }
 
         url = dso.links['self']['href']
@@ -967,12 +967,6 @@ class DSpaceClient:
             # that you see for other DSO types - still figuring out the best way
         return Group(api_resource=parse_json(self.create_dso(url, params=None, data=data)))
 
-    def start_workflow(self, workspace_item):
-        url = f'{self.API_ENDPOINT}/workflow/workflowitems'
-        res = parse_json(self.api_post_uri(url, params=None, uri_list=workspace_item))
-        logging.debug(res)
-        # TODO: WIP
-
     def update_token(self, r):
         """
         Refresh / update the XSRF (aka. CSRF) token if DSPACE-XSRF-TOKEN found in response headers
@@ -1017,3 +1011,18 @@ class DSpaceClient:
         return self.solr.search(query, fq=filters, start=start, rows=rows, **{
             'fl': ','.join(fields)
         })
+
+    def create_workspaceitem(self, collection_uuid):
+        """
+        Create a new workspace item within a specified collection.
+        :param collection_id: UUID of the collection that will own the workspace item.
+        :return: JSON response from the server or None if the creation failed.
+        """
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems?owningCollection={collection_uuid}"
+        r = self.api_post(url, json=None, params=None)
+        if r.status_code == 201:
+            logging.info("WorkspaceItem created successfully")
+            return parse_json(r)
+        else:
+            logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
+            return None
