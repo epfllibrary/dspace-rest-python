@@ -1017,6 +1017,40 @@ class DSpaceClient:
             'fl': ','.join(fields)
         })
 
+    def fetch_external_records(
+        self, query, source, sort="dc.title,ASC", page=0, size=10
+    ):
+        """
+        Fetch entries from the WOS external source with given parameters.
+
+        @param query:   query string to search
+        @param source:  external source to use for retrieving records
+        @param sort:    sorting criteria, default is 'dc.title,ASC'
+        @param page:    page number, default is 0
+        @param size:    size of the page, default is 10
+        @return:        list of entries fetched from the WOS external source
+        """
+        params = {"sort": sort, "page": page, "size": size, "query": query}
+
+        url = f"{self.API_ENDPOINT}/integration/externalsources/{source}/entries"
+
+        try:
+            r = self.api_get(url, params=params)
+            r.raise_for_status()
+            logging.info("External records found successfully")
+            r_json = r.json()
+            try:
+                results = r_json['_embedded']['externalSourceEntries']
+                return results
+            except (TypeError, ValueError) as err:
+                logging.error(f'error parsing search result json {err}')
+                return False
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            if r is not None:
+                logging.error("Response content: %s", r.content)
+            return False
+
     def create_workspaceitem(self, collection_uuid):
         """
         Create a new workspace item within a specified collection.
@@ -1055,7 +1089,7 @@ class DSpaceClient:
             return parse_json(r)
         else:
             logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
-            return None
+            return False
 
     def update_workspaceitem(self, workspace_item_id, patch_operations):
         url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_item_id}"
@@ -1075,4 +1109,27 @@ class DSpaceClient:
             logging.error(f"Request failed: {e}")
             if r is not None:
                 logging.error("Response content: %s", r.content)
+            return False
+
+    def create_workflowitem(self, workspace_id):
+        """
+        Create workflow item from workspace item ID.
+
+        @param workspace_id: ID of the workspace item to create workflow item from
+        @return: Response from API
+        """
+        params = {
+            "projection": "full"
+        }
+
+        url = f"{self.API_ENDPOINT}/workflow/workflowitems"
+        params = None  # No additional parameters for this request
+        uri_list = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
+        try:
+            r = self.api_post_uri(url, params=params, uri_list=uri_list)
+            r.raise_for_status()
+            logging.info(f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}")
+            return r.json()
+        except requests.RequestException as e:
+            logging.error(f"Failed to create WorkflowItem: {r.status_code}, {r.text}")
             return False
