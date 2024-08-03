@@ -18,16 +18,22 @@ import code
 import configparser
 import json
 import logging
+import os
 
 import requests
 from requests import Request
-import os
+import urllib.parse
+from dotenv import load_dotenv
+
 from uuid import UUID
 from .models import *
 
 __all__ = ['DSpaceClient']
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.getcwd(), ".env"))
 
 
 def parse_json(response):
@@ -57,7 +63,6 @@ class DSpaceClient:
     if 'USER_AGENT' in os.environ:
         USER_AGENT = os.environ['USER_AGENT']
     session = None
-    config: configparser.ConfigParser
     verbose = False
 
     # Simple enum for patch operation types
@@ -75,10 +80,8 @@ class DSpaceClient:
 
         """
         self.session = requests.Session()
-        self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
-        self.API_ENDPOINT = self.config.get("dspace", "endpoint")
-        self.API_TOKEN = self.config.get("dspace", "token")
+        self.API_ENDPOINT = os.getenv("DS_API_ENDPOINT")
+        self.API_TOKEN = os.getenv("DS_API_TOKEN")
         self.LOGIN_URL = f'{self.API_ENDPOINT}/authn/login'
         if fake_user_agent:
             self.USER_AGENT = 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
@@ -308,7 +311,9 @@ class DSpaceClient:
                     return self.api_patch(url, operation, path, value, True)
         elif r.status_code == 200:
             # 200 Success
-            logging.info(f'successful patch update to {r.json()["type"]} {r.json()["id"]}')
+            logging.info(
+                f'successful patch ({operation}) update to {r.json()["type"]} {r.json()["id"]} for metadata {path}'
+            )
 
         # Return the raw API response
         return r
@@ -1026,3 +1031,48 @@ class DSpaceClient:
         else:
             logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
             return None
+
+    def create_workspaceitem_from_external_source(
+        self, source, external_id, owningCollection
+    ):
+        """
+        Create a new workspace item from an external source.
+        :param source: source where to retrieve item.
+        :param external_id: primary id of the external record.
+        :param owningCollection: dspace collection where to create the new workspace item.
+        :return: JSON response from the server or None if the creation failed.
+        """
+        params = {
+            "projection": "full",
+            "owningCollection": f"{owningCollection}",
+        }
+
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems"
+        imported_record = f"{self.API_ENDPOINT}/integration/externalsources/{source}/entryValues/{external_id}"
+        r = self.api_post_uri(url, params=params, uri_list=imported_record)
+        if r.status_code == 201:
+            logging.info("WorkspaceItem created successfully")
+            return parse_json(r)
+        else:
+            logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
+            return None
+
+    def update_workspaceitem(self, workspace_item_id, patch_operations):
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_item_id}"
+        try:
+            for operation in patch_operations:
+                op_type = operation.get("op")
+                path = operation.get("path")
+                value = operation.get("value")
+                if not op_type or not path or value is None:
+                    logging.error(f"Invalid operation: {operation}")
+                    continue
+                r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+                r.raise_for_status()
+            logging.info("WorkspaceItem updated successfully")
+            return parse_json(r)
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            if r is not None:
+                logging.error("Response content: %s", r.content)
+            return False
