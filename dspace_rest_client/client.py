@@ -94,7 +94,11 @@ class DSpaceClient:
             "User-Agent": self.USER_AGENT,
             "access": self.ACCESS_TOKEN,
         }
-        self.list_request_headers = {'Content-type': 'text/uri-list', 'User-Agent': self.USER_AGENT}
+        self.list_request_headers = {
+            "Content-type": "text/uri-list",
+            "User-Agent": self.USER_AGENT,
+            "access": self.ACCESS_TOKEN,
+        }
 
     def authenticate(self, retry=False):
         """
