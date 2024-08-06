@@ -82,13 +82,18 @@ class DSpaceClient:
         self.session = requests.Session()
         self.API_ENDPOINT = os.getenv("DS_API_ENDPOINT")
         self.API_TOKEN = os.getenv("DS_API_TOKEN")
+        self.ACCESS_TOKEN = os.getenv("DS_ACCESS_TOKEN")
         self.LOGIN_URL = f'{self.API_ENDPOINT}/authn/login'
         if fake_user_agent:
             self.USER_AGENT = 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
                               'Chrome/39.0.2171.95 Safari/537.36'
         # Set headers based on this
         self.auth_request_headers = {'User-Agent': self.USER_AGENT}
-        self.request_headers = {'Content-type': 'application/json', 'User-Agent': self.USER_AGENT}
+        self.request_headers = {
+            "Content-type": "application/json",
+            "User-Agent": self.USER_AGENT,
+            "access": self.ACCESS_TOKEN,
+        }
         self.list_request_headers = {'Content-type': 'text/uri-list', 'User-Agent': self.USER_AGENT}
 
     def authenticate(self, retry=False):
