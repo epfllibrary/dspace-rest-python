@@ -1102,18 +1102,23 @@ class DSpaceClient:
 
     def update_workspaceitem(self, workspace_item_id, patch_operations):
         url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_item_id}"
+        r = None
         try:
             for operation in patch_operations:
                 op_type = operation.get("op")
                 path = operation.get("path")
                 value = operation.get("value")
+
                 if not op_type or not path or value is None:
                     logging.error(f"Invalid operation: {operation}")
                     continue
+
                 r = self.api_patch(url=url, operation=op_type, path=path, value=value)
                 r.raise_for_status()
+
             logging.info("WorkspaceItem updated successfully")
             return parse_json(r)
+
         except requests.exceptions.RequestException as e:
             logging.error(f"Request failed: {e}")
             if r is not None:
@@ -1141,4 +1146,61 @@ class DSpaceClient:
             return r.json()
         except requests.RequestException as e:
             logging.error(f"Failed to create WorkflowItem: {r.status_code}, {r.text}")
+            return False
+
+
+    def import_unpaywall_fulltext(self, workspace_item_id):
+        try:
+            patch_operations_refresh = [
+                {"op": "add", "path": "/sections/unpaywall/refresh", "value": True}
+            ]
+            r = self.update_workspaceitem(
+                workspace_item_id, patch_operations_refresh
+            )
+
+            if not r:
+                logging.error("Failed to refresh unpaywall status.")
+                return False
+
+            response_json = r
+
+            unpaywall_status = (
+                response_json.get("sections", {}).get("unpaywall", {}).get("status")
+            )
+
+            if unpaywall_status == "PENDING":
+                patch_operations_accept = [
+                    {"op": "add", "path": "/sections/unpaywall/accept", "value": True}
+                ]
+                accept_response = self.update_workspaceitem(
+                    workspace_item_id, patch_operations_accept
+                )
+
+                if not accept_response:
+                    logging.error("Failed to accept unpaywall.")
+                    return False
+
+                response_json = accept_response
+
+                unpaywall_status = (
+                    response_json.get("sections", {}).get("unpaywall", {}).get("status")
+                )
+
+                if unpaywall_status == "IMPORTED":
+                    logging.info("Unpaywall status successfully updated to IMPORTED.")
+                    return response_json
+                else:
+                    logging.error(
+                        f"Failed to update unpaywall status to IMPORTED. Current status: {unpaywall_status}"
+                    )
+                    return False
+
+            else:
+                logging.error(
+                    f"Unpaywall status is not PENDING after refresh. Current status: {unpaywall_status}"
+                )
+                return False
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
             return False
