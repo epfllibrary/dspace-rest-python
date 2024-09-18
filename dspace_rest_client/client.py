@@ -88,16 +88,20 @@ class DSpaceClient:
             self.USER_AGENT = 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
                               'Chrome/39.0.2171.95 Safari/537.36'
         # Set headers based on this
-        self.auth_request_headers = {'User-Agent': self.USER_AGENT}
+        self.auth_request_headers = {
+            "User-Agent": self.USER_AGENT,
+        }
         self.request_headers = {
             "Content-type": "application/json",
             "User-Agent": self.USER_AGENT,
             "access": self.ACCESS_TOKEN,
+            "Authorization": f"Bearer {self.API_TOKEN }",
         }
         self.list_request_headers = {
             "Content-type": "text/uri-list",
             "User-Agent": self.USER_AGENT,
             "access": self.ACCESS_TOKEN,
+            "Authorization": f"Bearer {self.API_TOKEN }",
         }
 
     def authenticate(self, retry=False):
@@ -112,8 +116,11 @@ class DSpaceClient:
         self.update_token(r)
 
         auth_token = self.API_TOKEN
+        access_token = self.ACCESS_TOKEN
         if auth_token:
-            self.session.headers.update({"Authorization": f"Bearer {auth_token}"})
+            self.session.headers.update(
+                {"Authorization": f"Bearer {auth_token}", "access": f"{access_token}"}
+            )
 
         # Get and check authentication status
         r = self.session.get(f"{self.API_ENDPOINT}/authn/status", headers=self.request_headers)
@@ -144,6 +151,9 @@ class DSpaceClient:
         """
         if headers is None:
             headers = self.request_headers
+            # logging.info(f"Headers set: {headers}")
+        # logging.info(f"Request URL : {url}")
+        # logging.info(f"Request URL params : {params}")
         r = self.session.get(url, params=params, data=data, headers=headers)
         self.update_token(r)
         return r
@@ -411,7 +421,9 @@ class DSpaceClient:
         """
         r = self.api_get(url, params, None)
         if r.status_code != 200:
-            logging.error(f'Error encountered fetching resource: {r.text}')
+            logging.error(
+                f"Error {r.status_code} encountered fetching resource: {r.headers}"
+            )
             return None
         # ValueError / JSON handling moved to static method
         return parse_json(r)
@@ -1147,7 +1159,6 @@ class DSpaceClient:
         except requests.RequestException as e:
             logging.error(f"Failed to create WorkflowItem: {r.status_code}, {r.text}")
             return False
-
 
     def import_unpaywall_fulltext(self, workspace_item_id):
         try:
