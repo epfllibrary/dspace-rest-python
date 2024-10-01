@@ -1,3 +1,0 @@
-[dspace]
-token=PutYourAPITokenHere
-endpoint=http://localhost:8080/server/api

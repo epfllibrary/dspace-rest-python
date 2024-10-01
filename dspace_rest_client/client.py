@@ -18,17 +18,22 @@ import code
 import configparser
 import json
 import logging
-import sys
+import os
 
 import requests
 from requests import Request
-import os
+import urllib.parse
+from dotenv import load_dotenv
+
 from uuid import UUID
 from .models import *
 
 __all__ = ['DSpaceClient']
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.getcwd(), ".env"))
 
 
 def parse_json(response):
@@ -58,7 +63,6 @@ class DSpaceClient:
     if 'USER_AGENT' in os.environ:
         USER_AGENT = os.environ['USER_AGENT']
     session = None
-    config: configparser.ConfigParser
     verbose = False
 
     # Simple enum for patch operation types
@@ -76,18 +80,29 @@ class DSpaceClient:
 
         """
         self.session = requests.Session()
-        self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
-        self.API_ENDPOINT = self.config.get("dspace", "endpoint")
-        self.API_TOKEN = self.config.get("dspace", "token")
+        self.API_ENDPOINT = os.getenv("DS_API_ENDPOINT")
+        self.API_TOKEN = os.getenv("DS_API_TOKEN")
+        self.ACCESS_TOKEN = os.getenv("DS_ACCESS_TOKEN")
         self.LOGIN_URL = f'{self.API_ENDPOINT}/authn/login'
         if fake_user_agent:
             self.USER_AGENT = 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
                               'Chrome/39.0.2171.95 Safari/537.36'
         # Set headers based on this
-        self.auth_request_headers = {'User-Agent': self.USER_AGENT}
-        self.request_headers = {'Content-type': 'application/json', 'User-Agent': self.USER_AGENT}
-        self.list_request_headers = {'Content-type': 'text-uri-list', 'User-Agent': self.USER_AGENT}
+        self.auth_request_headers = {
+            "User-Agent": self.USER_AGENT,
+        }
+        self.request_headers = {
+            "Content-type": "application/json",
+            "User-Agent": self.USER_AGENT,
+            "access": self.ACCESS_TOKEN,
+            "Authorization": f"Bearer {self.API_TOKEN }",
+        }
+        self.list_request_headers = {
+            "Content-type": "text/uri-list",
+            "User-Agent": self.USER_AGENT,
+            "access": self.ACCESS_TOKEN,
+            "Authorization": f"Bearer {self.API_TOKEN }",
+        }
 
     def authenticate(self, retry=False):
         """
@@ -95,13 +110,17 @@ class DSpaceClient:
         After POST, check /authn/status and log success if the authenticated json property is true
         @return: response object
         """
+        # Set headers for requests made during authentication
         # Get and update CSRF token
         r = self.session.post(self.LOGIN_URL, headers=self.auth_request_headers)
         self.update_token(r)
 
         auth_token = self.API_TOKEN
+        access_token = self.ACCESS_TOKEN
         if auth_token:
-            self.session.headers.update({"Authorization": f"Bearer {auth_token}"})
+            self.session.headers.update(
+                {"Authorization": f"Bearer {auth_token}", "access": f"{access_token}"}
+            )
 
         # Get and check authentication status
         r = self.session.get(f"{self.API_ENDPOINT}/authn/status", headers=self.request_headers)
@@ -132,6 +151,9 @@ class DSpaceClient:
         """
         if headers is None:
             headers = self.request_headers
+            # logging.info(f"Headers set: {headers}")
+        # logging.info(f"Request URL : {url}")
+        # logging.info(f"Request URL params : {params}")
         r = self.session.get(url, params=params, data=data, headers=headers)
         self.update_token(r)
         return r
@@ -308,13 +330,15 @@ class DSpaceClient:
                     return self.api_patch(url, operation, path, value, True)
         elif r.status_code == 200:
             # 200 Success
-            logging.info(f'successful patch update to {r.json()["type"]} {r.json()["id"]}')
+            logging.info(
+                f'successful patch ({operation}) update to {r.json()["type"]} {r.json()["id"]} for metadata {path}'
+            )
 
         # Return the raw API response
         return r
 
     # PAGINATION
-    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, configuration=None, scope=None, max_pages=None):
+    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dso_type=None, configuration=None, scope=None, max_pages=None):
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
@@ -349,6 +373,8 @@ class DSpaceClient:
         # UUID of the scoped object
         if scope is not None:
             params['scope'] = scope
+        if dso_type is not None:
+            params['dsoType'] = dso_type
         if size is not None:
             params['size'] = size
         if page is not None:
@@ -395,7 +421,9 @@ class DSpaceClient:
         """
         r = self.api_get(url, params, None)
         if r.status_code != 200:
-            logging.error(f'Error encountered fetching resource: {r.text}')
+            logging.error(
+                f"Error {r.status_code} encountered fetching resource: {r.headers}"
+            )
             return None
         # ValueError / JSON handling moved to static method
         return parse_json(r)
@@ -430,7 +458,7 @@ class DSpaceClient:
         r = self.api_post(url, params, data)
         if r.status_code == 201:
             # 201 Created - success!
-            new_dso = r.json()
+            new_dso = parse_json(r)
             logging.info(f'{new_dso["type"]} {new_dso["uuid"]} created successfully!')
         else:
             logging.error(f'create operation failed: {r.status_code}: {r.text} ({url})')
@@ -515,9 +543,8 @@ class DSpaceClient:
             else:
                 logging.error(f'update operation failed: {r.status_code}: {r.text} ({url})')
                 return None
-
         except ValueError as e:
-            logging.error(f'{e}')
+            logging.error(f'Error deleting DSO {dso.uuid}: {e}')
             return None
 
     # PAGINATION
@@ -708,7 +735,7 @@ class DSpaceClient:
             # Set new URL
             url = f'{url}/search/top'
 
-        print(f'Performing get on {url}')
+        logging.debug(f'Performing get on {url}')
         # Perform actual get
         r_json = self.fetch_resource(url, params)
         # Empty list
@@ -835,7 +862,7 @@ class DSpaceClient:
         items = list()
         if '_embedded' in r_json:
             # This is a list of items
-            if 'collections' in r_json['_embedded']:
+            if 'items' in r_json['_embedded']:
                 for item_resource in r_json['_embedded']['items']:
                     items.append(Item(item_resource))
         elif 'uuid' in r_json:
@@ -899,7 +926,7 @@ class DSpaceClient:
             'value': value,
             'language': language,
             'authority': authority,
-            'confidence': confidence
+            'confidence': confidence,
         }
 
         url = dso.links['self']['href']
@@ -966,12 +993,6 @@ class DSpaceClient:
             # that you see for other DSO types - still figuring out the best way
         return Group(api_resource=parse_json(self.create_dso(url, params=None, data=data)))
 
-    def start_workflow(self, workspace_item):
-        url = f'{self.API_ENDPOINT}/workflow/workflowitems'
-        res = parse_json(self.api_post_uri(url, params=None, uri_list=workspace_item))
-        logging.debug(res)
-        # TODO: WIP
-
     def update_token(self, r):
         """
         Refresh / update the XSRF (aka. CSRF) token if DSPACE-XSRF-TOKEN found in response headers
@@ -1016,3 +1037,181 @@ class DSpaceClient:
         return self.solr.search(query, fq=filters, start=start, rows=rows, **{
             'fl': ','.join(fields)
         })
+
+    def fetch_external_records(
+        self, query, source, sort="dc.title,ASC", page=0, size=10
+    ):
+        """
+        Fetch entries from the WOS external source with given parameters.
+
+        @param query:   query string to search
+        @param source:  external source to use for retrieving records
+        @param sort:    sorting criteria, default is 'dc.title,ASC'
+        @param page:    page number, default is 0
+        @param size:    size of the page, default is 10
+        @return:        list of entries fetched from the WOS external source
+        """
+        params = {"sort": sort, "page": page, "size": size, "query": query}
+
+        url = f"{self.API_ENDPOINT}/integration/externalsources/{source}/entries"
+
+        try:
+            r = self.api_get(url, params=params)
+            r.raise_for_status()
+            logging.info("External records found successfully")
+            r_json = r.json()
+            try:
+                results = r_json['_embedded']['externalSourceEntries']
+                return results
+            except (TypeError, ValueError) as err:
+                logging.error(f'error parsing search result json {err}')
+                return False
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            if r is not None:
+                logging.error("Response content: %s", r.content)
+            return False
+
+    def create_workspaceitem(self, collection_uuid):
+        """
+        Create a new workspace item within a specified collection.
+        :param collection_id: UUID of the collection that will own the workspace item.
+        :return: JSON response from the server or None if the creation failed.
+        """
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems?owningCollection={collection_uuid}"
+        r = self.api_post(url, json=None, params=None)
+        if r.status_code == 201:
+            logging.info("WorkspaceItem created successfully")
+            return parse_json(r)
+        else:
+            logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
+            return None
+
+    def create_workspaceitem_from_external_source(
+        self, source, external_id, owningCollection
+    ):
+        """
+        Create a new workspace item from an external source.
+        :param source: source where to retrieve item.
+        :param external_id: primary id of the external record.
+        :param owningCollection: dspace collection where to create the new workspace item.
+        :return: JSON response from the server or None if the creation failed.
+        """
+        params = {
+            "projection": "full",
+            "owningCollection": f"{owningCollection}",
+        }
+
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems"
+        imported_record = f"{self.API_ENDPOINT}/integration/externalsources/{source}/entryValues/{external_id}"
+        r = self.api_post_uri(url, params=params, uri_list=imported_record)
+        if r.status_code == 201:
+            logging.info("WorkspaceItem created successfully")
+            return parse_json(r)
+        else:
+            logging.error(f"Failed to create WorkspaceItem: {r.status_code}, {r.text}")
+            return False
+
+    def update_workspaceitem(self, workspace_item_id, patch_operations):
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_item_id}"
+        r = None
+        try:
+            for operation in patch_operations:
+                op_type = operation.get("op")
+                path = operation.get("path")
+                value = operation.get("value")
+
+                if not op_type or not path or value is None:
+                    logging.error(f"Invalid operation: {operation}")
+                    continue
+
+                r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+                r.raise_for_status()
+
+            logging.info("WorkspaceItem updated successfully")
+            return parse_json(r)
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            if r is not None:
+                logging.error("Response content: %s", r.content)
+            return False
+
+    def create_workflowitem(self, workspace_id):
+        """
+        Create workflow item from workspace item ID.
+
+        @param workspace_id: ID of the workspace item to create workflow item from
+        @return: Response from API
+        """
+        params = {
+            "projection": "full"
+        }
+
+        url = f"{self.API_ENDPOINT}/workflow/workflowitems"
+        params = None  # No additional parameters for this request
+        uri_list = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
+        try:
+            r = self.api_post_uri(url, params=params, uri_list=uri_list)
+            r.raise_for_status()
+            logging.info(f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}")
+            return r.json()
+        except requests.RequestException as e:
+            logging.error(f"Failed to create WorkflowItem: {r.status_code}, {r.text}")
+            return False
+
+    def import_unpaywall_fulltext(self, workspace_item_id):
+        try:
+            patch_operations_refresh = [
+                {"op": "add", "path": "/sections/unpaywall/refresh", "value": True}
+            ]
+            r = self.update_workspaceitem(
+                workspace_item_id, patch_operations_refresh
+            )
+
+            if not r:
+                logging.error("Failed to refresh unpaywall status.")
+                return False
+
+            response_json = r
+
+            unpaywall_status = (
+                response_json.get("sections", {}).get("unpaywall", {}).get("status")
+            )
+
+            if unpaywall_status == "PENDING":
+                patch_operations_accept = [
+                    {"op": "add", "path": "/sections/unpaywall/accept", "value": True}
+                ]
+                accept_response = self.update_workspaceitem(
+                    workspace_item_id, patch_operations_accept
+                )
+
+                if not accept_response:
+                    logging.error("Failed to accept unpaywall.")
+                    return False
+
+                response_json = accept_response
+
+                unpaywall_status = (
+                    response_json.get("sections", {}).get("unpaywall", {}).get("status")
+                )
+
+                if unpaywall_status == "IMPORTED":
+                    logging.info("Unpaywall status successfully updated to IMPORTED.")
+                    return response_json
+                else:
+                    logging.error(
+                        f"Failed to update unpaywall status to IMPORTED. Current status: {unpaywall_status}"
+                    )
+                    return False
+
+            else:
+                logging.error(
+                    f"Unpaywall status is not PENDING after refresh. Current status: {unpaywall_status}"
+                )
+                return False
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            return False
