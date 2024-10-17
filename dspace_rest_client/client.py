@@ -14,15 +14,12 @@ better abstracting and handling of HAL-like API responses, plus just all the oth
 
 @author Kim Shepherd <kim@shepherd.nz>
 """
-import code
-import configparser
 import json
 import logging
 import os
 
 import requests
 from requests import Request
-import urllib.parse
 from dotenv import load_dotenv
 
 from uuid import UUID
@@ -1142,23 +1139,25 @@ class DSpaceClient:
         Create workflow item from workspace item ID.
 
         @param workspace_id: ID of the workspace item to create workflow item from
-        @return: Response from API
+        @return: Response from API or False in case of failure
         """
-        params = {
-            "projection": "full"
-        }
-
         url = f"{self.API_ENDPOINT}/workflow/workflowitems"
         params = None  # No additional parameters for this request
         uri_list = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
+
         try:
             r = self.api_post_uri(url, params=params, uri_list=uri_list)
             r.raise_for_status()
-            logging.info(f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}")
+            logging.info(
+                f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}"
+            )
             return r.json()
         except requests.RequestException as e:
-            logging.error(f"Failed to create WorkflowItem: {r.status_code}, {r.text}")
-            return False
+            # Log the error without raising an exception that would block execution
+            logging.error(
+                f"Failed to create WorkflowItem: {getattr(r, 'status_code', 'N/A')}, {getattr(r, 'text', 'No response text')}"
+            )
+            return {"success": False, "error": str(e), "workspace_id": workspace_id}
 
     def import_unpaywall_fulltext(self, workspace_item_id):
         try:
@@ -1215,3 +1214,39 @@ class DSpaceClient:
         except requests.exceptions.RequestException as e:
             logging.error(f"Request failed: {e}")
             return False
+
+    def upload_file_to_workspace(self, workspace_id, file_path):
+        """
+        Upload a file to a workspace item in DSpace.
+
+        :param workspace_id: ID of the workspace item (e.g., '241262')
+        :param file_path: Path to the file you want to upload
+        :return: The response from the API
+        """
+        url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
+
+        # Open the file in binary mode
+        with open(file_path, "rb") as file:
+            files = {
+                "file": (file_path, file),
+            }
+            headers = {
+                "accept": "*/*",
+                "access": self.ACCESS_TOKEN,
+                "Authorization": f"Bearer {self.API_TOKEN}",
+            }
+
+            # Perform the request to upload the file
+            response = self.session.post(url, headers=headers, files=files)
+
+            # Log the status and return the response
+            if response.status_code == 200 or response.status_code == 201:
+                logging.info(
+                    f"File uploaded successfully to workspace item {workspace_id}"
+                )
+            else:
+                logging.error(
+                    f"Failed to upload file to workspace item {workspace_id}. Status: {response.status_code}. Response: {response.text}"
+                )
+
+            return response
