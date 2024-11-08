@@ -1250,7 +1250,7 @@ class DSpaceClient:
                 )
 
             return response
-        
+
     def delete_workspace_item(self, workspace_item_id):
         """
         Deletes a workspace item in DSpace by its ID.
@@ -1276,3 +1276,31 @@ class DSpaceClient:
             logging.error(f"Failed to delete workspace item {workspace_item_id}: {response.status_code} - {response.text}")
 
         return response
+
+    def get_authority(self, authority_type="AuthorAuthority", metadata="dc.contributor.author", filter_text="", exact=False):
+        """
+        Queries the DSpace API to retrieve author authorities based on the provided criteria.
+
+        @param metadata: Metadata field used for the search, default is "dc.contributor.author".
+        @param authority_type: Filter by authority type.
+        @param filter_text: Filter text for author search.
+        @param exact: Boolean indicating whether the match should be exact.
+        @return: API response containing author authorities matching the query.
+        """
+        url = f"{self.API_ENDPOINT}/submission/vocabularies/{authority_type}/entries"
+
+        params = {
+            "metadata": metadata,
+            "filter": filter_text,
+            "exact": str(exact),  
+        }
+
+        response = self.api_get(url, params=params)
+
+        if response.status_code == 200:
+            return parse_json(response)  # Retourner le JSON parsé
+        else:
+            logging.error(
+                f"Error when retrieving author autorithy: {response.status_code}"
+            )
+            return None
