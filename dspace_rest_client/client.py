@@ -1118,11 +1118,24 @@ class DSpaceClient:
                 path = operation.get("path")
                 value = operation.get("value")
 
-                if not op_type or not path or value is None:
-                    logging.error(f"Invalid operation: {operation}")
+                if not op_type or not path:
+                    logging.error(
+                        f"Invalid operation: {operation} - Missing 'op' or 'path'"
+                    )
                     continue
 
-                r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+                # handling 'remove' operation
+                if op_type == "remove":
+                    r = self.api_patch(url=url, operation=op_type, path=path, value=None)
+                else:
+                    if value is None:
+                        logging.error(
+                            f"Invalid operation: {operation} - 'value' is required for operation '{op_type}'"
+                        )
+                        continue
+
+                    r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+
                 r.raise_for_status()
 
             logging.info("WorkspaceItem updated successfully")
