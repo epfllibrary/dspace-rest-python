@@ -17,13 +17,13 @@ better abstracting and handling of HAL-like API responses, plus just all the oth
 import json
 import logging
 import os
-
+from uuid import UUID
 import requests
 from requests import Request
 from dotenv import load_dotenv
 
-from uuid import UUID
 from .models import *
+
 
 __all__ = ['DSpaceClient']
 
@@ -124,7 +124,6 @@ class DSpaceClient:
         if r.status_code == 200:
             r_json = parse_json(r)
             if 'authenticated' in r_json and r_json['authenticated'] is True:
-                logging.info(f'Authenticated successfully')
                 return r_json['authenticated']
         # Default, return false
         return False
