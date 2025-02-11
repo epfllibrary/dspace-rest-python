@@ -17,6 +17,7 @@ better abstracting and handling of HAL-like API responses, plus just all the oth
 import json
 import logging
 import os
+from pathlib import Path
 from uuid import UUID
 import requests
 from requests import Request
@@ -1227,6 +1228,7 @@ class DSpaceClient:
             logging.error(f"Request failed: {e}")
             return False
 
+
     def upload_file_to_workspace(self, workspace_id, file_path):
         """
         Upload a file to a workspace item in DSpace.
@@ -1237,31 +1239,44 @@ class DSpaceClient:
         """
         url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
 
-        # Open the file in binary mode
-        with open(file_path, "rb") as file:
-            files = {
-                "file": (file_path, file),
-            }
-            headers = {
-                "accept": "*/*",
-                "access": self.ACCESS_TOKEN,
-                "Authorization": f"Bearer {self.API_TOKEN}",
-            }
+        # Vérifier que file_path est bien une instance de Path et convertir en string
+        if isinstance(file_path, Path):
+            file_path = file_path.resolve()  # S'assurer qu'il est absolu
 
-            # Perform the request to upload the file
-            response = self.session.post(url, headers=headers, files=files)
+        if not file_path or not os.path.exists(file_path):
+            logging.error(f"PDF file {file_path} not found.")
+            return None
 
-            # Log the status and return the response
-            if response.status_code == 200 or response.status_code == 201:
-                logging.info(
-                    f"File uploaded successfully to workspace item {workspace_id}"
-                )
-            else:
-                logging.error(
-                    f"Failed to upload file to workspace item {workspace_id}. Status: {response.status_code}. Response: {response.text}"
-                )
+        try:
+            # Ouvrir le fichier en mode binaire
+            with open(file_path, "rb") as file:
+                files = {
+                    "file": (str(file_path.name), file),  # Convertir file_path en string
+                }
+                headers = {
+                    "accept": "*/*",
+                    "access": self.ACCESS_TOKEN,
+                    "Authorization": f"Bearer {self.API_TOKEN}",
+                }
 
-            return response
+                # Effectuer la requête POST pour uploader le fichier
+                response = self.session.post(url, headers=headers, files=files)
+
+                # Vérifier la réponse
+                if response.status_code in [200, 201]:
+                    logging.info(
+                        f"File uploaded successfully to workspace item {workspace_id}"
+                    )
+                else:
+                    logging.error(
+                        f"Failed to upload file to workspace item {workspace_id}. Status: {response.status_code}. Response: {response.text}"
+                    )
+
+                return response
+
+        except Exception as e:
+            logging.error(f"Erreur lors de l'upload du fichier {file_path} : {e}")
+            return None
 
     def delete_workspace_item(self, workspace_item_id):
         """
