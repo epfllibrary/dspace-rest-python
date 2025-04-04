@@ -1228,7 +1228,6 @@ class DSpaceClient:
             logging.error(f"Request failed: {e}")
             return False
 
-
     def upload_file_to_workspace(self, workspace_id, file_path):
         """
         Upload a file to a workspace item in DSpace.
@@ -1329,5 +1328,175 @@ class DSpaceClient:
         else:
             logging.error(
                 f"Error when retrieving author autorithy: {response.status_code}"
+            )
+            return None
+
+    def get_external_suggestions(
+        self, page=0, size=50, sort="display,ASC", source="orcidWorks"
+    ):
+        """
+        Retrieve all ORCID suggestions from the DSpace REST API.
+
+        This method queries the API to fetch all suggestion targets based on the specified source (e.g., ORCID works),
+        handling pagination automatically to retrieve all results.
+
+        :param page: Starting page number for pagination (default: 0).
+        :param size: Number of results per page (default: 100).
+        :param sort: Sorting criteria (default: "display,ASC").
+        :param source: Source of suggestions (default: "orcidWorks").
+        :return: A list of all suggestion targets or None if an error occurs.
+        """
+        # Construct the API endpoint URL
+        url = f"{self.API_ENDPOINT}/integration/suggestiontargets/search/findBySource"
+
+        # Define query parameters
+        params = {"page": page, "size": size, "sort": sort, "source": source}
+
+        all_suggestions = []  # To store all results
+
+        try:
+            while True:
+                # Perform the GET request
+                response = self.api_get(url, params=params)
+
+                # Check if the response is successful
+                if response.status_code == 200:
+                    data = parse_json(response)
+
+                    if not data:
+                        logging.error("Empty or invalid JSON response.")
+                        return None
+
+                    # Extract suggestions from the current page
+                    suggestions = data.get("_embedded", {}).get("suggestiontargets", [])
+
+                    if not suggestions:
+                        logging.info("No ORCID suggestions found in the current page.")
+                    else:
+                        all_suggestions.extend(suggestions)
+
+                    # Check if there is a next page
+                    links = data.get("_links", {})
+                    if "next" in links:
+                        # Update URL and params for the next page
+                        next_url = links["next"]["href"]
+                        url = next_url  # Use the next URL directly
+                        params = None  # Clear params since next_url includes them
+                    else:
+                        break  # No more pages to fetch
+
+                else:
+                    logging.error(
+                        f"Failed to retrieve ORCID suggestions: {response.status_code} - {response.text}"
+                    )
+                    return None
+
+            return all_suggestions
+
+        except requests.exceptions.RequestException as e:
+            logging.error(
+                f"Request exception occurred while retrieving ORCID suggestions: {e}"
+            )
+            return None
+
+
+    def get_suggestions_by_target(
+        self, target, page=0, size=50, sort="trust,DESC", source="orcidWorks"
+    ):
+        """
+        Retrieve all suggestions associated with a specific target (profile) from the DSpace REST API.
+
+        This method queries the API to fetch all suggestion targets for a given profile,
+        handling pagination automatically to retrieve all results.
+
+        Filters the metadata to include only 'id', 'display', 'metadata.dc.date.issued', 'metadata.dc.title',
+        and adds a new column 'pubyear' based on the year extracted from 'dc.date.issued'.
+
+        :param target: UUID of the target profile.
+        :param page: Starting page number for pagination (default: 0).
+        :param size: Number of results per page (default: 50).
+        :param sort: Sorting criteria (default: "trust,DESC").
+        :param source: Source of the suggestions (default: "orcidWorks").
+        :return: A list of all filtered suggestions or None if an error occurs.
+        """
+        # Construct the API endpoint URL
+        url = f"{self.API_ENDPOINT}/integration/suggestions/search/findByTargetAndSource"
+
+        # Define query parameters
+        params = {
+            "page": page,
+            "size": size,
+            "sort": sort,
+            "target": target,
+            "source": source,
+        }
+
+        all_suggestions = []  # To store all results
+
+        try:
+            while True:
+                # Perform the GET request
+                response = self.api_get(url, params=params)
+
+                # Check if the response is successful
+                if response.status_code == 200:
+                    data = parse_json(response)
+                    if not data:
+                        logging.error("Empty or invalid JSON response.")
+                        return None
+
+                    # Extract suggestions from the current page
+                    suggestions = data.get("_embedded", {}).get("suggestions", [])
+                    for suggestion in suggestions:
+                        # Extract and filter metadata
+                        date_issued = [
+                            entry.get("value")
+                            for entry in suggestion.get("metadata", {}).get(
+                                "dc.date.issued", []
+                            )
+                        ]
+
+                        # Extract publication year (first 4 digits of the first date issued)
+                        pubyear = None
+                        if date_issued:
+                            try:
+                                pubyear = date_issued[0][:4]  # Extract the year part
+                            except IndexError:
+                                pubyear = None
+
+                        filtered_suggestion = {
+                            "id": suggestion.get("id"),
+                            "display": suggestion.get("display"),
+                            "dc.date.issued": date_issued,
+                            "dc.title": [
+                                entry.get("value")
+                                for entry in suggestion.get("metadata", {}).get(
+                                    "dc.title", []
+                                )
+                            ],
+                            "pubyear": pubyear,  # Add publication year column
+                        }
+                        all_suggestions.append(filtered_suggestion)
+
+                    # Check if there is a next page
+                    links = data.get("_links", {})
+                    if "next" in links:
+                        next_url = links["next"]["href"]
+                        url = next_url  # Use the next URL directly
+                        params = None  # Clear params since next_url includes them
+                    else:
+                        break  # No more pages to fetch
+
+                else:
+                    logging.error(
+                        f"Failed to retrieve suggestions for target {target}: {response.status_code} - {response.text}"
+                    )
+                    return None
+
+            return {"suggestions": all_suggestions}
+
+        except requests.exceptions.RequestException as e:
+            logging.error(
+                f"Request exception occurred while retrieving suggestions for target {target}: {e}"
             )
             return None
