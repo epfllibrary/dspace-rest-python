@@ -1302,6 +1302,32 @@ class DSpaceClient:
             logging.error(f"Failed to delete workspace item {workspace_item_id}: {response.status_code} - {response.text}")
 
         return response
+    
+    def delete_workflow_item(self, workflow_item_id):
+        """
+        Deletes a workspace item in DSpace by its ID.
+        :param workspace_item_id: ID of the workspace item to delete.
+        :return: Response from the API.
+        """
+        if not workflow_item_id:
+            logging.error("Workflow item ID must be provided.")
+            return None
+
+        # Construct the URL for the DELETE request
+        url = f"{self.API_ENDPOINT}/workflow/workflowitems/{workflow_item_id}?expunge=true"
+
+        # Perform the DELETE request
+        response = self.api_delete(url)
+
+        # Check for successful deletion
+        if response.status_code == 204:
+            logging.info(f"Workflow item {workflow_item_id} deleted successfully.")
+        elif response.status_code == 404:
+            logging.warning(f"Workflow item {workflow_item_id} not found.")
+        else:
+            logging.error(f"Failed to delete Workflow item {workflow_item_id}: {response.status_code} - {response.text}")
+
+        return response
 
     def get_authority(self, authority_type="AuthorAuthority", metadata="dc.contributor.author", filter_text="", exact=False):
         """
