@@ -1147,6 +1147,63 @@ class DSpaceClient:
                 logging.error("Response content: %s", r.content)
             return False
 
+    def update_adminitem(self, uuid, patch_operations, embed="item"):
+        """
+        Apply one or more JSON Patch operations to an admin-editable item via /core/edititems/{uuid}:FULLADMIN.
+
+        :param uuid: UUID of the item to update.
+        :param patch_operations: List of patch operations (dicts with 'op', 'path', and optionally 'value').
+        :param embed: Optional embed parameter in the URL (default: 'item').
+        :return: Parsed JSON response if successful, else False.
+        """
+        if not uuid:
+            logging.error("UUID of admin item is required.")
+            return False
+
+        if not isinstance(patch_operations, list) or not patch_operations:
+            logging.error("patch_operations must be a non-empty list.")
+            return False
+
+        url = f"{self.API_ENDPOINT}/core/edititems/{uuid}:FULLADMIN"
+        if embed:
+            url += f"?embed={embed}"
+
+        r = None
+
+        try:
+            for operation in patch_operations:
+                op_type = operation.get("op")
+                path = operation.get("path")
+                value = operation.get("value")
+
+                if not op_type or not path:
+                    logging.error(
+                        f"Invalid operation: {operation} - Missing 'op' or 'path'"
+                    )
+                    continue
+
+                if op_type == "remove":
+                    r = self.api_patch(url=url, operation=op_type, path=path, value=None)
+                else:
+                    if value is None:
+                        logging.error(
+                            f"Invalid operation: {operation} - 'value' is required for operation '{op_type}'"
+                        )
+                        continue
+
+                    r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+
+                r.raise_for_status()
+
+            logging.info(f"Admin item {uuid} updated successfully.")
+            return parse_json(r)
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed during admin item update: {e}")
+            if r is not None:
+                logging.error("Response content: %s", r.content)
+            return False
+
     def create_workflowitem(self, workspace_id):
         """
         Create workflow item from workspace item ID.
@@ -1238,7 +1295,6 @@ class DSpaceClient:
         """
         url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
 
-        # Vérifier que file_path est bien une instance de Path et convertir en string
         if isinstance(file_path, Path):
             file_path = file_path.resolve()  # S'assurer qu'il est absolu
 
@@ -1277,6 +1333,65 @@ class DSpaceClient:
             logging.error(f"Erreur lors de l'upload du fichier {file_path} : {e}")
             return None
 
+
+    def add_file_adminitem(self, uuid, file_path):
+        """
+        Upload a file to an admin-editable item via /core/edititems/{uuid}:FULLADMIN.
+        Sends the CSRF token extracted from the cookie as a header.
+        """
+        if not uuid:
+            logging.error("UUID of the edit item must be provided.")
+            return None
+
+        if isinstance(file_path, Path):
+            file_path = file_path.resolve()
+
+        if not os.path.exists(file_path):
+            logging.error(f"File not found at path: {file_path}")
+            return None
+
+        # URL with :FULLADMIN
+        edit_token = f"{uuid}:FULLADMIN"
+        url = f"{self.API_ENDPOINT}/core/edititems/{edit_token}"
+
+        try:
+            with open(file_path, "rb") as file:
+                files = {
+                    "file": (os.path.basename(file_path), file),
+                }
+
+                # 🔐 Extract CSRF token from cookies
+                csrf_cookie = self.session.cookies.get("DSPACE-XSRF-COOKIE")
+
+                if not csrf_cookie:
+                    logging.error("CSRF cookie not found. Have you authenticated?")
+                    return None
+
+                headers = {
+                    "accept": "*/*",
+                    "Authorization": f"Bearer {self.API_TOKEN}",
+                    "X-XSRF-TOKEN": csrf_cookie,  # ✅ Required CSRF header
+                }
+
+                response = self.session.post(url, headers=headers, files=files)
+
+                # Update CSRF token if a new one is sent
+                self.update_token(response)
+
+                if response.status_code in [200, 201]:
+                    logging.info(f"File successfully uploaded to admin item {uuid}")
+                else:
+                    logging.error(
+                        f"Failed to upload file to admin item {uuid}. "
+                        f"Status: {response.status_code}. Response: {response.text}"
+                    )
+
+                return response
+
+        except Exception as e:
+            logging.error(f"Error uploading file to admin item {uuid}: {e}")
+            return None
+
     def delete_workspace_item(self, workspace_item_id):
         """
         Deletes a workspace item in DSpace by its ID.
@@ -1302,7 +1417,7 @@ class DSpaceClient:
             logging.error(f"Failed to delete workspace item {workspace_item_id}: {response.status_code} - {response.text}")
 
         return response
-    
+
     def delete_workflow_item(self, workflow_item_id):
         """
         Deletes a workspace item in DSpace by its ID.
@@ -1424,7 +1539,6 @@ class DSpaceClient:
                 f"Request exception occurred while retrieving ORCID suggestions: {e}"
             )
             return None
-
 
     def get_suggestions_by_target(
         self, target, page=0, size=50, sort="trust,DESC", source="orcidWorks"
