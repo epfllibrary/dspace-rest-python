@@ -1333,7 +1333,6 @@ class DSpaceClient:
             logging.error(f"Erreur lors de l'upload du fichier {file_path} : {e}")
             return None
 
-
     def add_file_adminitem(self, uuid, file_path):
         """
         Upload a file to an admin-editable item via /core/edititems/{uuid}:FULLADMIN.
@@ -1640,3 +1639,52 @@ class DSpaceClient:
                 f"Request exception occurred while retrieving suggestions for target {target}: {e}"
             )
             return None
+
+    def get_facet_values(
+        self, facet_name, query=None, configuration=None, size=10, page=0, sort=None
+    ):
+        """
+        Retrieve the values for a specific discovery facet from the DSpace REST API.
+
+        This function is useful for inspecting facet counts (e.g., departments, years, labs)
+        in the context of a search query.
+
+        :param facet_name:      Name of the facet (e.g. 'unitOrLab')
+        :param query:           Optional Lucene-style search query (e.g. 'entityType:(Publication) and dateIssued.year:(2023)')
+        :param configuration:   Optional discovery configuration (e.g. 'researchoutputs')
+        :param size:            Number of facet values to return (default: 10)
+        :param page:            Result page to retrieve (default: 0)
+        :param sort:            Optional sort order (not always supported)
+        :return:                A list of dicts with 'label' and 'count' per facet value, or None if request fails
+        """
+        url = f"{self.API_ENDPOINT}/discover/facets/{facet_name}"
+        params = {
+            "page": page,
+            "size": size,
+        }
+
+        # Add optional parameters
+        if query:
+            params["query"] = query
+        if configuration:
+            params["configuration"] = configuration
+        if sort:
+            params["sort"] = sort
+
+        # Make the API request
+        response = self.api_get(url, params=params)
+
+        if response.status_code != 200:
+            logging.error(
+                f"Error retrieving facet '{facet_name}': {response.status_code} - {response.text}"
+            )
+            return None
+
+        # Parse the JSON response
+        data = parse_json(response)
+        if not data or "_embedded" not in data or "values" not in data["_embedded"]:
+            logging.warning(f"No facet values found for '{facet_name}'")
+            return []
+
+        # Return the facet values
+        return data["_embedded"]["values"]
