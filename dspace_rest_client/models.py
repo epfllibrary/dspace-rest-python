@@ -106,6 +106,8 @@ class DSpaceObject(HALResource):
     uuid = None
     name = None
     handle = None
+    submitterName = None
+    submitterEmail = None
     metadata = {}
     lastModified = None
     type = None
@@ -134,6 +136,10 @@ class DSpaceObject(HALResource):
                 self.name = api_resource['name']
             if 'handle' in api_resource:
                 self.handle = api_resource['handle']
+            if "submitterName" in api_resource:
+                self.submitterName = api_resource["submitterName"]
+            if "submitterEmail" in api_resource:
+                self.submitterEmail = api_resource["submitterEmail"]
             if 'metadata' in api_resource:
                 self.metadata = api_resource['metadata'].copy()
             # Python interprets _ prefix as private so for now, renaming this and handling it separately
@@ -197,6 +203,8 @@ class DSpaceObject(HALResource):
             'uuid': self.uuid,
             'name': self.name,
             'handle': self.handle,
+            'submitterName': self.submitterName,
+            'submitterEmail': self.submitterEmail,
             'metadata': self.metadata,
             'lastModified': self.lastModified,
             'type': self.type,
@@ -516,5 +524,3 @@ class RelationshipType(AddressableHALResource):
     """
     def __init__(self, api_resource):
         super(RelationshipType, self).__init__(api_resource)
-
-
