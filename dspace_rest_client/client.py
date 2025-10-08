@@ -408,6 +408,47 @@ class DSpaceClient:
 
         return dsos
 
+    def count_results(
+        self, query=None, filters=None, dso_type=None, configuration=None, scope=None
+    ):
+        """
+        Compte le nombre total d'objets trouvés par une recherche dans DSpace.
+
+        @param query:        chaîne de recherche
+        @param filters:      filtres discovery sous forme de dict ex: {'f.entityType': 'Publication,equals', ... }
+        @param dso_type:     type de DSO pour restreindre les résultats
+        @param configuration: configuration de recherche (ex: 'researchoutputs', 'person', etc.)
+        @param scope:        uuid pour restreindre le périmètre (collection, communauté, etc.)
+        @return:             entier représentant le nombre total d’items
+        """
+        if filters is None:
+            filters = {}
+
+        url = f"{self.API_ENDPOINT}/discover/search/objects"
+        params = {}
+
+        if query is not None:
+            params["query"] = query
+        if configuration is not None:
+            params["configuration"] = configuration
+        if scope is not None:
+            params["scope"] = scope
+        if dso_type is not None:
+            params["dsoType"] = dso_type
+
+        # inutile de demander beaucoup de résultats, 1 suffit pour récupérer la pagination
+        params["size"] = 1
+        params["page"] = 0
+
+        try:
+            r_json = self.fetch_resource(url=url, params={**params, **filters})
+            total_elements = r_json["_embedded"]["searchResult"]["page"][
+                "totalElements"
+            ]
+            return total_elements
+        except (KeyError, TypeError, ValueError) as err:
+            logging.error(f"Erreur en récupérant le nombre total d'objets : {err}")
+
     def fetch_resource(self, url, params=None):
         """
         Simple function for higher-level 'get' functions to use whenever they want
