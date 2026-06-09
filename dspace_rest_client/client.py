@@ -334,6 +334,43 @@ class DSpaceClient:
         # Return the raw API response
         return r
 
+    def api_patch_bulk(self, url, operations, retry=False):
+        """
+        Send multiple JSON-Patch operations in a single HTTP PATCH request.
+        @param url: DSpace REST API URL
+        @param operations: List of dicts, each with 'op', 'path', and optionally 'value'
+        @param retry: Has this method already been retried (for CSRF refresh)?
+        @return: raw API response
+        """
+        if not url:
+            logging.error("Missing required URL argument")
+            return None
+        if not operations:
+            logging.error("operations list is empty")
+            return None
+
+        r = self.session.patch(url, json=operations, headers=self.request_headers)
+        self.update_token(r)
+
+        if r.status_code == 403:
+            logging.debug(r.text)
+            r_json = parse_json(r)
+            if "message" in r_json and "CSRF token" in r_json["message"]:
+                if retry:
+                    logging.warning("Too many retries updating token: %s: %s", r.status_code, r.text)
+                else:
+                    logging.debug("Retrying bulk patch request with updated CSRF token")
+                    return self.api_patch_bulk(url, operations, True)
+        elif r.status_code == 200:
+            op_summary = ", ".join(
+                f"{o.get('op')} {o.get('path')}" for o in operations[:3]
+            )
+            if len(operations) > 3:
+                op_summary += f" ... (+{len(operations) - 3} more)"
+            logging.info("successful bulk patch (%d ops): %s", len(operations), op_summary)
+
+        return r
+
     # PAGINATION
     def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dso_type=None, configuration=None, scope=None, max_pages=None):
         """
@@ -1152,40 +1189,40 @@ class DSpaceClient:
 
     def update_workspaceitem(self, workspace_item_id, patch_operations):
         url = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_item_id}"
-        r = None
         try:
+            valid_ops = []
             for operation in patch_operations:
                 op_type = operation.get("op")
                 path = operation.get("path")
                 value = operation.get("value")
 
                 if not op_type or not path:
+                    logging.error("Invalid operation: %s - Missing 'op' or 'path'", operation)
+                    continue
+
+                if op_type != "remove" and value is None:
                     logging.error(
-                        f"Invalid operation: {operation} - Missing 'op' or 'path'"
+                        "Invalid operation: %s - 'value' is required for operation '%s'",
+                        operation,
+                        op_type,
                     )
                     continue
 
-                # handling 'remove' operation
-                if op_type == "remove":
-                    r = self.api_patch(url=url, operation=op_type, path=path, value=None)
-                else:
-                    if value is None:
-                        logging.error(
-                            f"Invalid operation: {operation} - 'value' is required for operation '{op_type}'"
-                        )
-                        continue
+                valid_ops.append(operation)
 
-                    r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+            if not valid_ops:
+                logging.warning("No valid operations to apply to workspaceitem %s", workspace_item_id)
+                return None
 
+            r = self.api_patch_bulk(url, valid_ops)
+            if r is not None:
                 r.raise_for_status()
 
-            logging.info("WorkspaceItem updated successfully")
+            logging.info("WorkspaceItem %s updated successfully (%d ops)", workspace_item_id, len(valid_ops))
             return parse_json(r)
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Request failed: {e}")
-            if r is not None:
-                logging.error("Response content: %s", r.content)
+            logging.error("Request failed: %s", e)
             return False
 
     def update_adminitem(self, uuid, patch_operations, embed="item"):
@@ -1209,40 +1246,40 @@ class DSpaceClient:
         if embed:
             url += f"?embed={embed}"
 
-        r = None
-
         try:
+            valid_ops = []
             for operation in patch_operations:
                 op_type = operation.get("op")
                 path = operation.get("path")
                 value = operation.get("value")
 
                 if not op_type or not path:
+                    logging.error("Invalid operation: %s - Missing 'op' or 'path'", operation)
+                    continue
+
+                if op_type != "remove" and value is None:
                     logging.error(
-                        f"Invalid operation: {operation} - Missing 'op' or 'path'"
+                        "Invalid operation: %s - 'value' is required for operation '%s'",
+                        operation,
+                        op_type,
                     )
                     continue
 
-                if op_type == "remove":
-                    r = self.api_patch(url=url, operation=op_type, path=path, value=None)
-                else:
-                    if value is None:
-                        logging.error(
-                            f"Invalid operation: {operation} - 'value' is required for operation '{op_type}'"
-                        )
-                        continue
+                valid_ops.append(operation)
 
-                    r = self.api_patch(url=url, operation=op_type, path=path, value=value)
+            if not valid_ops:
+                logging.warning("No valid operations to apply to admin item %s", uuid)
+                return None
 
+            r = self.api_patch_bulk(url, valid_ops)
+            if r is not None:
                 r.raise_for_status()
 
-            logging.info(f"Admin item {uuid} updated successfully.")
+            logging.info("Admin item %s updated successfully (%d ops).", uuid, len(valid_ops))
             return parse_json(r)
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Request failed during admin item update: {e}")
-            if r is not None:
-                logging.error("Response content: %s", r.content)
+            logging.error("Request failed during admin item update: %s", e)
             return False
 
     def create_workflowitem(self, workspace_id):
