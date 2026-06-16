@@ -1216,6 +1216,11 @@ class DSpaceClient:
 
             r = self.api_patch_bulk(url, valid_ops)
             if r is not None:
+                if not r.ok:
+                    logging.error(
+                        "WorkspaceItem PATCH %s failed (%s): %s",
+                        workspace_item_id, r.status_code, r.text[:4000]
+                    )
                 r.raise_for_status()
 
             logging.info("WorkspaceItem %s updated successfully (%d ops)", workspace_item_id, len(valid_ops))
