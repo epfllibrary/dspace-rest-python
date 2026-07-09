@@ -421,9 +421,10 @@ class DSpaceClient:
         while True:
             params['page'] = page  # Set the current page
             r_json = self.fetch_resource(url=url, params={**params, **filters})
-            # totalElements = r_json['_embedded']['searchResult']['page']['totalElements']
-            # logging.info(f'Total objects retrieved: {totalElements}')
-            # logging.info(f'Results for page: {page}')
+            try:
+                total_elements = r_json['_embedded']['searchResult']['page'].get('totalElements')
+            except (KeyError, TypeError):
+                total_elements = None
             # instead lots of 'does this key exist, etc etc' checks, just go for it and wrap in a try?
             try:
                 results = r_json['_embedded']['searchResult']['_embedded']['objects']
@@ -432,6 +433,10 @@ class DSpaceClient:
                     dso = DSpaceObject(resource)
                     dsos.append(dso)
                 total_pages += 1
+                if total_elements is not None:
+                    logging.info(f'  page {page + 1} — {len(dsos)}/{total_elements} items fetched')
+                else:
+                    logging.info(f'  page {page + 1} — {len(dsos)} items fetched so far')
                 # Check if there are more pages
                 if '_links' in r_json['_embedded']['searchResult'] and 'next' in r_json['_embedded']['searchResult']['_links']:
                     page += 1  # Move to the next page
