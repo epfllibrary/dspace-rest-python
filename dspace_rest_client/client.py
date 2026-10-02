@@ -778,6 +778,64 @@ class DSpaceClient:
             logging.error(f'Error creating bitstream: {r.status_code}: {r.text}')
             return None
 
+    def launch_script_process(self, script_name, parameters=None, retry=False):
+        """
+        Launch a registered DSpace-CRIS admin script as an asynchronous backend process,
+        via POST /api/system/scripts/{script_name}/processes (multipart/form-data,
+        a 'properties' part holding a JSON array of {"name": ..., "value": ...} pairs —
+        the documented DSpace 7+ REST contract for script parameters, e.g.
+        [{"name": "-a", "value": "LPQM1"}] to scope synchronization-of-orgunits to one
+        acronym). No file part is uploaded — the multipart encoding is forced the same
+        way as create_bitstream, via a files-only 'properties' entry with no filename.
+
+        Confirmed against a live DSpace-CRIS instance: launches successfully and the
+        resulting processId can be polled via get_process() below.
+
+        @param script_name: registered script name (e.g. 'synchronization-of-orgunits')
+        @param parameters:  list of {"name": str, "value": str} dicts (CLI-style flags)
+        @param retry:       internal CSRF-retry indicator, mirrors create_bitstream
+        @return:            parsed JSON response (the launched Process resource), or None
+        """
+        url = f'{self.API_ENDPOINT}/system/scripts/{script_name}/processes'
+        properties = parameters or []
+        files = {'properties': (None, json.dumps(properties), 'application/json')}
+        h = self.session.headers
+        h.update({'User-Agent': self.USER_AGENT})
+        req = Request('POST', url, headers=h, files=files)
+        prepared_req = self.session.prepare_request(req)
+        r = self.session.send(prepared_req)
+        if 'DSPACE-XSRF-TOKEN' in r.headers:
+            t = r.headers['DSPACE-XSRF-TOKEN']
+            logging.debug('Updating token to ' + t)
+            self.session.headers.update({'X-XSRF-Token': t})
+            self.session.cookies.update({'X-XSRF-Token': t})
+        if r.status_code == 403:
+            r_json = parse_json(r)
+            if 'message' in r_json and 'CSRF token' in r_json['message']:
+                if retry:
+                    logging.error('Already retried... something must be wrong')
+                else:
+                    logging.debug("Retrying request with updated CSRF token")
+                    return self.launch_script_process(script_name, parameters, True)
+        if r.status_code == 200 or r.status_code == 201 or r.status_code == 202:
+            return parse_json(r)
+        logging.error(f'Error launching script process {script_name}: {r.status_code}: {r.text}')
+        return None
+
+    def get_process(self, process_id):
+        """
+        Fetch one system process resource — GET /api/system/processes/{id}.
+        Used to poll a script launched via launch_script_process() until it
+        reaches a terminal processStatus (COMPLETED/FAILED). Confirmed
+        against a live DSpace-CRIS instance: processStatus is one of
+        SCHEDULED/RUNNING/COMPLETED/FAILED.
+
+        @param process_id: the processId returned by launch_script_process()
+        @return: parsed JSON Process resource, or None if not found/error
+        """
+        url = f'{self.API_ENDPOINT}/system/processes/{process_id}'
+        return self.fetch_resource(url)
+
     def download_bitstream(self, uuid=None):
         """
         Download bitstream and return full response object including headers, and content
