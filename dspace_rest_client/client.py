@@ -1362,8 +1362,19 @@ class DSpaceClient:
         """
         Create workflow item from workspace item ID.
 
+        Some collections have no workflow step configured — the submission
+        is archived directly and the server responds 2xx with an empty body
+        (there is no WorkflowItem resource to represent). requests.Response.
+        json() raises requests.exceptions.JSONDecodeError on an empty body,
+        which IS a requests.RequestException subclass, so it would otherwise
+        be reported as a failure even though the request succeeded. Checked
+        explicitly via r.text before parsing so that case is reported as
+        {"no_workflow": True, ...}, not an error.
+
         @param workspace_id: ID of the workspace item to create workflow item from
-        @return: Response from API or False in case of failure
+        @return: Response from API, {"no_workflow": True, "workspace_id": ...}
+                 when the collection has no workflow, or
+                 {"success": False, "error": ..., "workspace_id": ...} on failure
         """
         url = f"{self.API_ENDPOINT}/workflow/workflowitems"
         params = None  # No additional parameters for this request
@@ -1372,16 +1383,24 @@ class DSpaceClient:
         try:
             r = self.api_post_uri(url, params=params, uri_list=uri_list)
             r.raise_for_status()
-            logging.info(
-                f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}"
-            )
-            return r.json()
         except requests.RequestException as e:
             # Log the error without raising an exception that would block execution
             logging.error(
                 f"Failed to create WorkflowItem: {getattr(r, 'status_code', 'N/A')}, {getattr(r, 'text', 'No response text')}"
             )
             return {"success": False, "error": str(e), "workspace_id": workspace_id}
+
+        if not r.text or not r.text.strip():
+            logging.info(
+                f"WorkflowItem request succeeded with an empty body for WorkspaceItem "
+                f"#{workspace_id} — collection has no workflow step, item archived directly."
+            )
+            return {"no_workflow": True, "workspace_id": workspace_id}
+
+        logging.info(
+            f"WorkflowItem created successfully from WorkspaceItem #{workspace_id}"
+        )
+        return r.json()
 
     def import_unpaywall_fulltext(self, workspace_item_id):
         try:
