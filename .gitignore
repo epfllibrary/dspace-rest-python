@@ -10,3 +10,4 @@ env/
 venv/
 .idea/
 config.ini
+.DS_Store
