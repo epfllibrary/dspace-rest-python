@@ -444,6 +444,14 @@ class DSpaceClient:
                     break  # No more pages to retrieve or reached max_pages
             except (TypeError, ValueError) as err:
                 logging.error(f'error parsing search result json {err}')
+                # r_json is unusable (fetch_resource returns None on any
+                # non-2xx response, e.g. a 422 from a malformed/invalid
+                # scope UUID) — total_pages/page never advance on this path,
+                # so without this break the loop retries the exact same
+                # failing request forever (confirmed live: hangs
+                # indefinitely, ignoring max_pages, which only guards the
+                # success path below).
+                break
             # Check if the maximum number of pages has been reached
             if max_pages is not None and total_pages >= max_pages:
                 break
