@@ -21,7 +21,9 @@ from pathlib import Path
 from uuid import UUID
 import requests
 from requests import Request
+from requests.adapters import HTTPAdapter
 from dotenv import load_dotenv
+from urllib3.util import Retry
 
 from .models import *
 
@@ -32,6 +34,42 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 # Load environment variables from .env file
 load_dotenv(os.path.join(os.getcwd(), ".env"))
+
+CONNECT_TIMEOUT_SECONDS = 10
+READ_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEOUT = (CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS)
+READ_RETRIES = 2
+RETRY_BACKOFF_FACTOR = 1
+
+
+class DSpaceReadError(Exception):
+    """A read the caller asked to be strict about failed: no answer, an HTTP error or an unreadable body."""
+
+
+class TimeoutSession(requests.Session):
+    """
+    A requests session giving every request a (connect, read) timeout unless the caller sets one.
+    requests waits forever by default: a DSpace read left without an answer would block a whole run.
+    The timeout is applied in send(), which every request goes through (api_* methods, prepared
+    bitstream uploads, redirects). A timed-out or dropped read (GET, HEAD…) is retried READ_RETRIES
+    times; a write (POST, PATCH) never is — the server may already have applied it.
+    """
+
+    def __init__(self, timeout=DEFAULT_TIMEOUT):
+        super().__init__()
+        self.timeout = timeout
+        retries = Retry(
+            total=READ_RETRIES, connect=READ_RETRIES, read=READ_RETRIES, status=0,
+            backoff_factor=RETRY_BACKOFF_FACTOR, raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.mount("http://", adapter)
+        self.mount("https://", adapter)
+
+    def send(self, request, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
 
 
 def parse_json(response):
@@ -77,7 +115,7 @@ class DSpaceClient:
         api_token: token for DSpace REST API
 
         """
-        self.session = requests.Session()
+        self.session = TimeoutSession()
         self.API_ENDPOINT = os.getenv("DS_API_ENDPOINT")
         self.API_TOKEN = os.getenv("DS_API_TOKEN")
         self.ACCESS_TOKEN = os.getenv("DS_ACCESS_TOKEN")
@@ -372,7 +410,7 @@ class DSpaceClient:
         return r
 
     # PAGINATION
-    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dso_type=None, configuration=None, scope=None, max_pages=None):
+    def search_objects(self, query=None, filters=None, page=0, size=20, sort=None, dso_type=None, configuration=None, scope=None, max_pages=None, raise_on_error=False):
         """
         Do a basic search with optional query, filters and dsoType params.
         @param query:   query string
@@ -382,6 +420,8 @@ class DSpaceClient:
         @param size: size of page (aka. 'rows'), affects the page parameter above
         @param sort: sort eg. 'title,asc'
         @param dso_type: DSO type to further filter results
+        @param raise_on_error: raise DSpaceReadError when a page cannot be read, instead of returning
+                        what was read so far — an empty list would otherwise look like "nothing found"
         @return:        list of DspaceObject objects constructed from API resources
         """
         dsos = []
@@ -420,7 +460,7 @@ class DSpaceClient:
         total_pages = 0  # To keep track of the total number of pages retrieved
         while True:
             params['page'] = page  # Set the current page
-            r_json = self.fetch_resource(url=url, params={**params, **filters})
+            r_json = self._fetch_search(url, {**params, **filters}, raise_on_error)
             try:
                 total_elements = r_json['_embedded']['searchResult']['page'].get('totalElements')
             except (KeyError, TypeError):
@@ -459,7 +499,7 @@ class DSpaceClient:
         return dsos
 
     def count_results(
-        self, query=None, filters=None, dso_type=None, configuration=None, scope=None
+        self, query=None, filters=None, dso_type=None, configuration=None, scope=None, raise_on_error=False
     ):
         """
         Compte le nombre total d'objets trouvés par une recherche dans DSpace.
@@ -469,6 +509,7 @@ class DSpaceClient:
         @param dso_type:     type de DSO pour restreindre les résultats
         @param configuration: configuration de recherche (ex: 'researchoutputs', 'person', etc.)
         @param scope:        uuid pour restreindre le périmètre (collection, communauté, etc.)
+        @param raise_on_error: lever DSpaceReadError si la recherche échoue, au lieu de renvoyer None
         @return:             entier représentant le nombre total d’items
         """
         if filters is None:
@@ -490,14 +531,31 @@ class DSpaceClient:
         params["size"] = 1
         params["page"] = 0
 
+        r_json = self._fetch_search(url, {**params, **filters}, raise_on_error)
         try:
-            r_json = self.fetch_resource(url=url, params={**params, **filters})
             total_elements = r_json["_embedded"]["searchResult"]["page"][
                 "totalElements"
             ]
             return total_elements
         except (KeyError, TypeError, ValueError) as err:
+            if raise_on_error:
+                raise DSpaceReadError(f"Search result without a total: {url}") from err
             logging.error(f"Erreur en récupérant le nombre total d'objets : {err}")
+
+    def _fetch_search(self, url, params, raise_on_error):
+        """
+        fetch_resource for a discovery search. With raise_on_error, a search that fails (no answer,
+        HTTP error, body without a search result) raises DSpaceReadError instead of returning None.
+        """
+        if not raise_on_error:
+            return self.fetch_resource(url=url, params=params)
+        try:
+            r_json = self.fetch_resource(url=url, params=params)
+        except requests.exceptions.RequestException as err:
+            raise DSpaceReadError(f"Search failed: {url} ({err})") from err
+        if not isinstance(r_json, dict) or "searchResult" not in (r_json.get("_embedded") or {}):
+            raise DSpaceReadError(f"Search failed or unreadable: {url}")
+        return r_json
 
     def fetch_resource(self, url, params=None):
         """
@@ -1149,7 +1207,7 @@ class DSpaceClient:
         """
         if not self.session:
             logging.debug('Session state not found, setting...')
-            self.session = requests.Session()
+            self.session = TimeoutSession()
         if 'DSPACE-XSRF-TOKEN' in r.headers:
             t = r.headers['DSPACE-XSRF-TOKEN']
             logging.debug(f'Updating XSRF token to {t}')
@@ -1164,7 +1222,7 @@ class DSpaceClient:
         """
         if not self.session:
             logging.debug('Session state not found, setting...')
-            self.session = requests.Session()
+            self.session = TimeoutSession()
 
         url = f'{self.API_ENDPOINT}/authn/shortlivedtokens'
         r = self.api_post(url, json=None, params=None)
