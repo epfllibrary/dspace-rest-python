@@ -1432,21 +1432,25 @@ class DSpaceClient:
         @param workspace_id: ID of the workspace item to create workflow item from
         @return: Response from API, {"no_workflow": True, "workspace_id": ...}
                  when the collection has no workflow, or
-                 {"success": False, "error": ..., "workspace_id": ...} on failure
+                 {"success": False, "timeout": bool, "error": ..., "workspace_id": ...} on failure —
+                 a timeout leaves unknown whether the server processed the submission
         """
         url = f"{self.API_ENDPOINT}/workflow/workflowitems"
         params = None  # No additional parameters for this request
         uri_list = f"{self.API_ENDPOINT}/submission/workspaceitems/{workspace_id}"
 
+        r = None
         try:
             r = self.api_post_uri(url, params=params, uri_list=uri_list)
             r.raise_for_status()
         except requests.RequestException as e:
             # Log the error without raising an exception that would block execution
+            # (r is None when no response came back: a timeout, a connection error).
             logging.error(
-                f"Failed to create WorkflowItem: {getattr(r, 'status_code', 'N/A')}, {getattr(r, 'text', 'No response text')}"
+                f"Failed to create WorkflowItem: {getattr(r, 'status_code', 'N/A')}, {getattr(r, 'text', str(e))}"
             )
-            return {"success": False, "error": str(e), "workspace_id": workspace_id}
+            return {"success": False, "timeout": isinstance(e, requests.exceptions.Timeout), "error": str(e),
+                    "workspace_id": workspace_id}
 
         if not r.text or not r.text.strip():
             logging.info(
